@@ -1,0 +1,114 @@
+# Go Build Pipeline
+# Demonstrates parallel execution, container sets, and Go-specific build patterns
+# Use Case: Building and testing Go applications with comprehensive quality checks
+
+steps:
+  # Step 1: Setup and dependency management
+  - name: Setup Dependencies
+    inlineScript: |
+      #!/bin/bash
+      echo "Setting up Go environment..."
+      cd $REPOSITORY_DIR
+      go version
+      go mod download
+      go mod verify
+      echo "Dependencies downloaded and verified"
+
+  # Step 2: Parallel quality checks using container sets
+  - - name: Unit Tests
+      containerSet:
+        - name: test-runner
+          image: golang:1.21-alpine
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+      inlineScript: |
+        #!/bin/bash
+        echo "Running Go unit tests..."
+        cd $REPOSITORY_DIR
+        go test -v -race -coverprofile=coverage.out ./...
+        go tool cover -func=coverage.out
+        echo "Unit tests completed"
+      timeout: 300
+      retries: 2
+
+    - name: Integration Tests
+      containerSet:
+        - name: integration-test
+          image: golang:1.21-alpine
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "1000m"
+            limits:
+              memory: "2Gi"
+              cpu: "2000m"
+      inlineScript: |
+        #!/bin/bash
+        echo "Running integration tests..."
+        cd $REPOSITORY_DIR
+        go test -v -tags=integration ./...
+        echo "Integration tests completed"
+      timeout: 600
+      retries: 1
+      env:
+        - name: DATABASE_URL
+          value: "{{SECRETS.TEST_DATABASE_URL}}"
+        - name: REDIS_URL
+          value: "{{VARIABLES.TEST_REDIS_URL}}"
+
+    - name: Code Quality
+      containerSet:
+        - name: linter
+          image: golangci/golangci-lint:v1.54-alpine
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "500m"
+      inlineScript: |
+        #!/bin/bash
+        echo "Running code quality checks..."
+        cd $REPOSITORY_DIR
+        golangci-lint run --timeout 5m
+        echo "Code quality checks completed"
+      timeout: 300
+      retries: 1
+
+  # Step 3: Build application
+  - name: Build Application
+    template: choreo/buildpack-build@v1
+
+  # Step 4: Security scanning
+  - name: Security Scan
+    template: choreo/trivy-scan@v1
+    timeout: 300
+    retries: 1
+
+  # Step 5: Build summary
+  - name: Build Summary
+    inlineScript: |
+      #!/bin/bash
+      echo "=== Go Build Summary ==="
+      echo "Application: {{VARIABLES.APP_NAME}}"
+      echo "Version: {{VARIABLES.VERSION}}"
+      echo "Go Version: $(go version)"
+      echo "Build completed successfully"
+      echo "Artifacts ready for deployment"
+    env:
+      - name: BUILD_NUMBER
+        value: "{{VARIABLES.BUILD_NUMBER}}"
+
+# Required Configuration:
+# VARIABLES:
+#   APP_NAME: "go-microservice"
+#   VERSION: "1.0.0"
+#   GO_PROXY: "https://proxy.golang.org"
+#   TEST_REDIS_URL: "redis://localhost:6379"
+#   BUILD_NUMBER: "123"
+#
+# SECRETS:
+#   TEST_DATABASE_URL: "postgresql://username:password@hostname:5432/test_database"

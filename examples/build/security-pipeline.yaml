@@ -1,0 +1,337 @@
+# Security-First Pipeline Example
+# Use case: Comprehensive security scanning integrated into CI pipeline
+# Prerequisites: Configure security tools and notification channels
+
+pipelineType: ci
+version: "1.0"
+
+arguments:
+  parameters:
+    - name: app_name
+      value: "{{VARIABLES.APP_NAME}}"
+    - name: version
+      value: "{{VARIABLES.VERSION}}"
+    - name: security_threshold
+      value: "{{VARIABLES.SECURITY_THRESHOLD}}"  # e.g., "HIGH"
+
+steps:
+  # Step 1: Source code security scan
+  - name: Source Code Security Scan
+    template: choreo/sast-scan@v1
+    arguments:
+      parameters:
+        - name: language
+          value: "javascript"
+        - name: source_path
+          value: "./src"
+        - name: severity_threshold
+          value: "{{arguments.parameters.security_threshold}}"
+        - name: exclude_paths
+          yamlObject:
+            - "node_modules/"
+            - "dist/"
+            - "*.test.js"
+            - "*.spec.ts"
+        - name: output_format
+          value: "sarif"
+        - name: rules_config
+          value: ".security-rules.yaml"
+
+  # Step 2: Dependency vulnerability scan
+  - name: Dependency Security Scan
+    template: choreo/dependency-scan@v1
+    arguments:
+      parameters:
+        - name: package_manager
+          value: "npm"
+        - name: manifest_file
+          value: "package.json"
+        - name: lock_file
+          value: "package-lock.json"
+        - name: audit_level
+          value: "high"
+        - name: production_only
+          value: "true"
+        - name: fail_on_vulnerability
+          value: "true"
+
+  # Step 3: Secrets detection
+  - name: Secrets Detection
+    template: choreo/secret-scan@v1
+    arguments:
+      parameters:
+        - name: scan_path
+          value: "."
+        - name: config_file
+          value: ".gitleaks.toml"
+        - name: entropy_threshold
+          value: "3.5"
+        - name: exclude_paths
+          yamlObject:
+            - "*.lock"
+            - "node_modules/"
+            - ".git/"
+            - "dist/"
+
+  # Step 4: License compliance check
+  - name: License Compliance
+    template: choreo/license-scan@v1
+    arguments:
+      parameters:
+        - name: package_manager
+          value: "npm"
+        - name: allowed_licenses
+          yamlObject:
+            - "MIT"
+            - "Apache-2.0"
+            - "BSD-2-Clause"
+            - "BSD-3-Clause"
+            - "ISC"
+        - name: restricted_licenses
+          yamlObject:
+            - "GPL-3.0"
+            - "AGPL-3.0"
+            - "COPYLEFT"
+        - name: fail_on_restricted
+          value: "true"
+
+  # Step 5: Build the application (after security checks pass)
+  - name: Secure Build
+    template: choreo/docker-build@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "Dockerfile"
+        - name: context
+          value: "."
+        - name: image_name
+          value: "{{arguments.parameters.app_name}}"
+        - name: image_tag
+          value: "{{arguments.parameters.version}}-secure"
+        - name: build_args
+          yamlObject:
+            # Security-hardened build
+            SECURITY_SCAN: "true"
+            BUILD_MODE: "secure"
+            NODE_ENV: "production"
+        - name: push
+          value: "false"  # Don't push until container scan passes
+
+  # Step 6: Container security scan
+  - name: Container Security Scan
+    template: choreo/trivy-scan@v1
+    arguments:
+      parameters:
+        - name: scan_type
+          value: "image"
+        - name: target
+          value: "{{arguments.parameters.app_name}}:{{arguments.parameters.version}}-secure"
+        - name: severity
+          value: "HIGH,CRITICAL"
+        - name: scanners
+          yamlObject:
+            - "vuln"      # Vulnerabilities
+            - "secret"    # Secrets in image
+            - "config"    # Misconfigurations
+        - name: ignore_unfixed
+          value: "false"  # Report all vulnerabilities
+        - name: exit_code
+          value: "1"      # Fail pipeline on vulnerabilities
+        - name: format
+          value: "sarif"
+        - name: output_file
+          value: "container-scan-results.sarif"
+
+  # Step 7: Dockerfile security best practices
+  - name: Dockerfile Security Scan
+    template: choreo/dockerfile-scan@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "Dockerfile"
+        - name: fail_threshold
+          value: "error"
+        - name: format
+          value: "sarif"
+        - name: trusted_registries
+          yamlObject:
+            - "docker.io"
+            - "registry.access.redhat.com"
+            - "{{VARIABLES.TRUSTED_REGISTRY}}"
+
+  # Step 8: Infrastructure as Code scan (if present)
+  - name: Infrastructure Security Scan
+    when: "fileExists('./terraform') || fileExists('./k8s') || fileExists('./docker-compose.yml')"
+    template: choreo/checkov-scan@v1
+    arguments:
+      parameters:
+        - name: directory
+          value: "."
+        - name: framework
+          value: "terraform,kubernetes,dockerfile,docker_compose"
+        - name: skip_checks
+          yamlObject:
+            # Skip specific checks if needed
+            - "CKV_DOCKER_2"  # Health check (might not apply)
+        - name: hard_fail_on
+          yamlObject:
+            - "HIGH"
+            - "CRITICAL"
+        - name: output_format
+          value: "sarif"
+        - name: download_external_modules
+          value: "true"
+
+  # Step 9: Security report generation
+  - name: Security Report
+    template: choreo/security-report@v1
+    arguments:
+      parameters:
+        - name: input_formats
+          yamlObject:
+            - "sarif"
+        - name: input_files
+          yamlObject:
+            - "sast-results.sarif"
+            - "dependency-scan-results.sarif"
+            - "container-scan-results.sarif"
+            - "dockerfile-scan-results.sarif"
+        - name: output_format
+          value: "html"
+        - name: output_file
+          value: "security-report.html"
+        - name: include_summary
+          value: "true"
+        - name: severity_counts
+          value: "true"
+
+  # Step 10: Security gate check
+  - name: Security Gate
+    inlineScript: |
+      #!/bin/bash
+      echo "🛡️ Evaluating security gate..."
+      
+      # Check if all security scans passed
+      SECURITY_EXIT_CODE=0
+      
+      # Count high/critical vulnerabilities from reports
+      if [ -f "container-scan-results.sarif" ]; then
+        HIGH_VULNS=$(jq '.runs[0].results | map(select(.level == "error")) | length' container-scan-results.sarif 2>/dev/null || echo "0")
+        CRITICAL_VULNS=$(jq '.runs[0].results | map(select(.ruleId | contains("CRITICAL"))) | length' container-scan-results.sarif 2>/dev/null || echo "0")
+        
+        echo "Container scan - High: $HIGH_VULNS, Critical: $CRITICAL_VULNS"
+        
+        # Security gate thresholds
+        if [ "$HIGH_VULNS" -gt 5 ] || [ "$CRITICAL_VULNS" -gt 0 ]; then
+          echo "❌ Security gate failed: Too many vulnerabilities"
+          SECURITY_EXIT_CODE=1
+        fi
+      fi
+      
+      # Check for secrets in code
+      if [ -f "secret-scan-results.json" ]; then
+        SECRETS_FOUND=$(jq '.[] | length' secret-scan-results.json 2>/dev/null || echo "0")
+        echo "Secrets detected: $SECRETS_FOUND"
+        
+        if [ "$SECRETS_FOUND" -gt 0 ]; then
+          echo "❌ Security gate failed: Secrets detected in code"
+          SECURITY_EXIT_CODE=1
+        fi
+      fi
+      
+      if [ $SECURITY_EXIT_CODE -eq 0 ]; then
+        echo "✅ Security gate passed - ready for deployment"
+      else
+        echo "❌ Security gate failed - fix issues before proceeding"
+        exit $SECURITY_EXIT_CODE
+      fi
+
+  # Step 11: Push secure image (only after all security checks pass)
+  - name: Push Secure Image
+    template: choreo/docker-build@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "Dockerfile"
+        - name: context
+          value: "."
+        - name: image_name
+          value: "{{VARIABLES.DOCKER_REGISTRY}}/{{arguments.parameters.app_name}}"
+        - name: image_tag
+          value: "{{arguments.parameters.version}}-security-verified"
+        - name: push
+          value: "true"
+        - name: registry_auth
+          yamlObject:
+            username: "{{VARIABLES.REGISTRY_USERNAME}}"
+            password: "{{SECRETS.REGISTRY_PASSWORD}}"
+
+  # Step 12: Security notifications
+  - name: Security Success Notification
+    when: "{{workflow.status}} == 'Succeeded'"
+    template: choreo/slack-notify@v1
+    arguments:
+      parameters:
+        - name: webhook_url
+          value: "{{SECRETS.SECURITY_SLACK_WEBHOOK}}"
+        - name: channel
+          value: "#security"
+        - name: message
+          value: "✅ Security pipeline passed for {{arguments.parameters.app_name}} v{{arguments.parameters.version}}"
+        - name: title
+          value: "Security Validation Complete"
+        - name: color
+          value: "good"
+        - name: fields
+          yamlObject:
+            Application: "{{arguments.parameters.app_name}}"
+            Version: "{{arguments.parameters.version}}"
+            Branch: "{{CI_BRANCH}}"
+            Commit: "{{CI_COMMIT_SHA}}"
+            Pipeline: "Security-First CI"
+
+  # Step 13: Security failure alert
+  - name: Security Failure Alert
+    when: "{{workflow.status}} == 'Failed'"
+    template: choreo/slack-notify@v1
+    arguments:
+      parameters:
+        - name: webhook_url
+          value: "{{SECRETS.SECURITY_SLACK_WEBHOOK}}"
+        - name: channel
+          value: "#security-alerts"
+        - name: message
+          value: "🚨 SECURITY PIPELINE FAILED for {{arguments.parameters.app_name}} v{{arguments.parameters.version}}"
+        - name: title
+          value: "Security Validation Failed"
+        - name: color
+          value: "danger"
+        - name: fields
+          yamlObject:
+            Application: "{{arguments.parameters.app_name}}"
+            Version: "{{arguments.parameters.version}}"
+            Branch: "{{CI_BRANCH}}"
+            Failure_Reason: "Security vulnerabilities detected"
+            Action_Required: "Review security report and fix issues"
+        - name: mentions
+          yamlObject:
+            - "@security-team"
+            - "@devops-oncall"
+
+# Required Configuration:
+# VARIABLES:
+#   APP_NAME: "my-secure-app"
+#   VERSION: "1.0.0"
+#   SECURITY_THRESHOLD: "HIGH"
+#   DOCKER_REGISTRY: "myregistry.com"
+#   TRUSTED_REGISTRY: "myregistry.com"
+#   REGISTRY_USERNAME: "ci-user"
+#
+# SECRETS:
+#   REGISTRY_PASSWORD: "your-registry-password-here"
+#   SECURITY_SLACK_WEBHOOK: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+#
+# Files needed:
+# - .security-rules.yaml (SAST configuration)
+# - .gitleaks.toml (secrets detection config)
+# - Dockerfile (with security best practices)

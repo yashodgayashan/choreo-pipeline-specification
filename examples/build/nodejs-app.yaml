@@ -1,0 +1,142 @@
+# Complete Node.js Application Pipeline
+# Full CI/CD pipeline for Node.js applications
+# Configuration managed through Choreo Console
+
+# Global arguments
+arguments:
+  parameters:
+    - name: node_version
+      value: "18"
+    - name: coverage_threshold
+      value: "80"
+
+# Volume for caching dependencies
+volumes:
+  - name: npm-cache
+    emptyDir: {}
+
+steps:
+  # Security scan
+  - name: Security Scan
+    template: choreo/checkov-scan@v1
+
+  # Parallel quality checks
+  - - name: Dependency Audit
+      inlineScript: |
+        #!/bin/bash
+        echo "Checking for vulnerabilities..."
+        cd $REPOSITORY_DIR
+        npm audit --audit-level=high
+        echo "Security audit completed"
+      image: "node:{{arguments.parameters.node_version}}-alpine"
+    
+    - name: Lint Check
+      template: eslint-check
+    
+    - name: Format Check
+      inlineScript: |
+        #!/bin/bash
+        cd $REPOSITORY_DIR
+        npm ci
+        npm run format:check
+      image: "node:{{arguments.parameters.node_version}}-alpine"
+      volumeMounts:
+        - name: npm-cache
+          mountPath: /root/.npm
+
+  # Test execution
+  - name: Run Tests
+    template: test-runner
+    arguments:
+      parameters:
+        - name: coverage_threshold
+          value: "{{arguments.parameters.coverage_threshold}}"
+
+  # Build application
+  - name: Build Application
+    template: choreo/buildpack-build@v1
+
+  # Build Docker image
+  - name: Docker Build
+    template: choreo/docker-build@v1
+
+  # Security scan on image
+  - name: Container Scan
+    template: choreo/trivy-scan@v1
+
+  # Deploy notification
+  - name: Send Notification
+    template: slack-notification
+    continueOn:
+      error: true
+
+# Template definitions
+templates:
+  - name: eslint-check
+    inlineScript: |
+      #!/bin/bash
+      echo "Running ESLint..."
+      cd $REPOSITORY_DIR
+      npm ci
+      npm run lint
+      echo "Lint check completed"
+    image: "node:{{arguments.parameters.node_version}}-alpine"
+    volumeMounts:
+      - name: npm-cache
+        mountPath: /root/.npm
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "500m"
+
+  - name: test-runner
+    inlineScript: |
+      #!/bin/bash
+      echo "Running tests with coverage..."
+      cd $REPOSITORY_DIR
+      npm ci
+      npm test -- --coverage
+      
+      # Check coverage threshold
+      COVERAGE=$(cat coverage/coverage-summary.json | jq '.total.lines.pct')
+      THRESHOLD={{inputs.parameters.coverage_threshold}}
+      
+      if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+        echo "Coverage too low: $COVERAGE% (threshold: $THRESHOLD%)"
+        exit 1
+      fi
+      
+      echo "Tests passed with $COVERAGE% coverage"
+    image: "node:{{arguments.parameters.node_version}}-alpine"
+    inputs:
+      parameters:
+        - name: coverage_threshold
+    volumeMounts:
+      - name: npm-cache
+        mountPath: /root/.npm
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "1000m"
+      limits:
+        memory: "2Gi"
+        cpu: "2000m"
+
+  - name: slack-notification
+    inlineScript: |
+      #!/bin/bash
+      echo "Sending Slack notification..."
+      
+      MESSAGE="Pipeline completed for Node.js application"
+      
+      if [ -n "$SLACK_WEBHOOK_URL" ]; then
+        curl -X POST \
+          -H 'Content-type: application/json' \
+          --data "{\"text\":\"$MESSAGE\"}" \
+          $SLACK_WEBHOOK_URL
+      else
+        echo "Slack webhook not configured"
+      fi
+    env:
+      - name: SLACK_WEBHOOK_URL
+        value: "{{SECRETS.SLACK_WEBHOOK_URL}}"

@@ -1,14 +1,14 @@
 # Choreo Pipeline Specification
 
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/wso2/choreo-pipeline-specification/releases)
-[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](docs/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](https://github.com/wso2/choreo-pipeline-specification/blob/main/LICENSE)
+[![Documentation](https://img.shields.io/badge/docs-latest-brightgreen.svg)](specification/overview.md)
 
-The official specification for defining pipelines in the Choreo Internal Developer Platform (IDP). This specification provides a YAML-based configuration system built on top of Argo Workflows, supporting build pipelines, automation workflows, and general-purpose task orchestration while abstracting away Kubernetes complexity.
+The official specification for defining pipelines in the Choreo Internal Developer Platform (IDP). This specification provides a YAML-based configuration system built on top of Argo Workflows, supporting build pipelines, deployment pipelines, automation workflows, and general-purpose task orchestration while abstracting away Kubernetes complexity.
 
 ## Quick Start
 
-Configure your pipeline in the Choreo Console:
+Following is a sample simple pipeline configuration which can be used in Choreo. Please refer to the [Quick Start Guide](guides/quick-start.md) for more details.
 
 ```yaml
 steps:
@@ -20,28 +20,29 @@ steps:
       #!/bin/bash
       npm test
   
-  - name: Publish
-    when: "{{BUILD_BRANCH}} == 'main'"
-    template: choreo/artifact-upload@v1
+  - name: Deploy
+    when: "{{VARIABLES.DEPLOYMENT_TRACKS.DEPLOYMENT_BRANCH}} == 'main'"
+    template: choreo/deploy@v1
 ```
 
-**Get started with our [Quick Start Guide](docs/guides/quick-start.md) and [Examples](examples/README.md)**
+**Get started with our [Quick Start Guide](guides/quick-start.md) and [Examples](examples/README.md)**
 
 ## Documentation
 
 ### Core Documentation
 
-- [**Overview**](docs/specification/overview.md) - Introduction to the pipeline specification
-- [**Core Concepts**](docs/specification/concepts.md) - Fundamental concepts and architecture
-- [**Configuration Guide**](docs/specification/pipeline-configuration.md) - Complete configuration reference
-- [**API Reference**](docs/api-reference/index.md) - Detailed API documentation
+- [**Overview**](specification/overview.md) - Introduction to the pipeline specification
+- [**Core Concepts**](specification/concepts.md) - Fundamental concepts and architecture
+- [**Configuration Guide**](specification/pipeline-configuration.md) - Complete configuration reference
+- [**API Reference**](specification/README.md) - Detailed API documentation
+- [**LLM Guide**](LLMs.md) - Using AI assistants to generate pipelines
 
 ### Examples
 
 Browse our [example pipelines](examples/) organized by pipeline type:
 
 - [**Build Pipelines**](examples/build/) - Pipelines for building and testing
-  
+- [**Deployment Pipelines**](examples/deployment/) - Deployment and release pipelines  
 - [**Automation Pipelines**](examples/automation/) - Scheduled and long-running tasks
 - [**Choreo Templates**](examples/choreo-templates/) - Template usage examples
 
@@ -73,15 +74,15 @@ Browse our [example pipelines](examples/) organized by pipeline type:
 ```
 choreo-pipeline-specification/
 ├── docs/                      # Specification documentation
-│   ├── specification/         # Core specification docs
-│   ├── api-reference/         # API reference documentation
+│   ├── specification/         # Core specification and API docs
 │   ├── choreo-templates/      # Choreo templates documentation
-│   └── guides/                # How-to guides and migrations
+│   ├── guides/                # How-to guides and migrations
+│   └── LLMs.md                # Guide for using LLMs with pipelines
 ├── examples/                  # Example pipelines
 │   ├── build/                 # Build pipeline examples
+│   ├── deployment/            # Deployment pipeline examples
 │   ├── automation/            # Automation pipeline examples
 │   └── choreo-templates/      # Template usage examples
-├── tests/                     # Test files
 ├── CONTRIBUTING.md            # Contribution guidelines
 └── README.md                  # This file
 ```
@@ -95,8 +96,11 @@ choreo-pipeline-specification/
 3. Configure your pipeline either by:
    - **Plain Text**: Paste your YAML configuration directly
    - **Repository**: Provide the repository location containing your pipeline YAML
-4. Save to trigger pipeline execution
+4. Save and deploy to trigger pipeline execution
 
+### For Documentation Integration
+
+See [INTEGRATION.md](INTEGRATION.md) for detailed instructions on integrating with docs-choreo-dev.
 
 ## Pipeline Components
 
@@ -170,8 +174,6 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 
 ## Validation
 
-Validate your pipeline configuration:
-
 Pipeline configurations are automatically validated by the Choreo Console when you save them. The console provides:
 
 - **Real-time syntax validation** - YAML syntax errors are highlighted immediately
@@ -179,6 +181,12 @@ Pipeline configurations are automatically validated by the Choreo Console when y
 - **Template validation** - Template references and parameters are verified
 - **Error reporting** - Clear error messages with line numbers and suggestions
 
+## Integration with docs-choreo-dev
+
+This specification is integrated with the main Choreo documentation. See:
+
+- [Integration Guide](https://github.com/wso2/choreo-pipeline-specification/blob/main/INTEGRATION.md) - How to integrate with MkDocs
+- [Main Documentation](https://github.com/wso2/docs-choreo-dev) - Choreo documentation repository
 
 ## Status
 
@@ -194,16 +202,15 @@ Pipeline configurations are automatically validated by the Choreo Console when y
 - Read the [documentation](specification/overview.md)
 - Browse [examples](examples/)
 - Report [issues](https://github.com/wso2/choreo-pipeline-specification/issues)
-- Start a [discussion](https://github.com/wso2/choreo-pipeline-specification/discussions)
 
 ## License
 
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](https://github.com/wso2/choreo-pipeline-specification/blob/main/LICENSE) file for details.
 
 ## About WSO2
 
-WSO2 is an open-source technology provider that delivers software to create and manage APIs and cloud-native applications.
+WSO2 is an open-source technology provider that delivers software to create, deploy, and manage APIs and cloud-native applications.
 
 ---
 
-**[Documentation](docs/)** | **[Examples](examples/)** | **[API Reference](docs/api-reference/)** | **[Choreo Templates](docs/choreo-templates/overview.md)** | **[Contributing](CONTRIBUTING.md)**
+**[Documentation](specification/overview.md)** | **[Examples](examples/README.md)** | **[API Reference](api-reference/index.md)** | **[Choreo Templates](choreo-templates/overview.md)** | **[Contributing](https://github.com/wso2/choreo-pipeline-specification/blob/main/CONTRIBUTING.md)**

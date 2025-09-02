@@ -1,0 +1,704 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/wso2/choreo-pipeline-specification/blob/main/docs/specification/pipeline-schema.json",
+  "title": "Choreo Customizable CI Pipeline Specification",
+  "description": "JSON Schema for validating Choreo customizable CI pipeline configurations (pipeline.yaml)",
+  "type": "object",
+  "properties": {
+    "steps": {
+      "type": "array",
+      "description": "Pipeline steps to execute in sequence or parallel",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/definitions/step"
+          },
+          {
+            "type": "array",
+            "description": "Parallel steps (double-dash syntax)",
+            "items": {
+              "$ref": "#/definitions/step"
+            }
+          }
+        ]
+      },
+      "minItems": 1
+    },
+    "templates": {
+      "type": "array",
+      "description": "Custom template definitions",
+      "items": {
+        "$ref": "#/definitions/template"
+      }
+    },
+    "containerTemplates": {
+      "type": "array",
+      "description": "Container template definitions",
+      "items": {
+        "$ref": "#/definitions/containerTemplate"
+      }
+    },
+    "arguments": {
+      "$ref": "#/definitions/arguments",
+      "description": "Global arguments for the workflow"
+    },
+    "volumes": {
+      "type": "array",
+      "description": "Volume definitions",
+      "items": {
+        "$ref": "#/definitions/volume"
+      }
+    },
+    "volumeClaimTemplates": {
+      "type": "array",
+      "description": "Volume claim template definitions",
+      "items": {
+        "$ref": "#/definitions/volumeClaimTemplate"
+      }
+    }
+  },
+  "required": ["steps"],
+  "definitions": {
+    "step": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique step name (alphanumeric and hyphens only)"
+        },
+        "template": {
+          "type": "string",
+          "description": "Template reference (e.g., 'choreo/buildpack-build@v1' or custom template name)"
+        },
+        "templateRef": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": ["name"]
+        },
+        "containerSet": {
+          "$ref": "#/definitions/containerSet"
+        },
+        "inlineScript": {
+          "type": "string",
+          "description": "Inline bash script to execute"
+        },
+        "image": {
+          "type": "string",
+          "description": "Container image to use for this step"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Command to run in the container"
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments to pass to the command"
+        },
+        "env": {
+          "$ref": "#/definitions/envVars"
+        },
+        "volumeMounts": {
+          "$ref": "#/definitions/volumeMounts"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        },
+        "retryStrategy": {
+          "$ref": "#/definitions/retryStrategy"
+        },
+        "timeout": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h)$",
+          "description": "Step timeout (e.g., '10m', '1h')"
+        },
+        "when": {
+          "type": "string",
+          "description": "Conditional execution expression"
+        },
+        "continueOn": {
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "boolean"
+            }
+          }
+        },
+        "arguments": {
+          "$ref": "#/definitions/arguments"
+        },
+        "inputs": {
+          "$ref": "#/definitions/inputs"
+        },
+        "outputs": {
+          "$ref": "#/definitions/outputs"
+        },
+        "securityContext": {
+          "type": "object",
+          "properties": {
+            "privileged": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "required": ["name"],
+      "oneOf": [
+        {
+          "required": ["template"]
+        },
+        {
+          "required": ["templateRef"]
+        },
+        {
+          "required": ["containerSet"]
+        },
+        {
+          "required": ["inlineScript"]
+        }
+      ]
+    },
+    "template": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Template name"
+        },
+        "inlineScript": {
+          "type": "string",
+          "description": "Bash script content"
+        },
+        "image": {
+          "type": "string",
+          "description": "Container image (optional, defaults to Choreo base image)"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source": {
+          "type": "string",
+          "description": "Script source (for Argo script templates)"
+        },
+        "script": {
+          "$ref": "#/definitions/argoScript"
+        },
+        "containerSet": {
+          "$ref": "#/definitions/containerSet"
+        },
+        "env": {
+          "$ref": "#/definitions/envVars"
+        },
+        "volumeMounts": {
+          "$ref": "#/definitions/volumeMounts"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        },
+        "inputs": {
+          "$ref": "#/definitions/inputs"
+        },
+        "outputs": {
+          "$ref": "#/definitions/outputs"
+        },
+        "timeout": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h)$"
+        },
+        "retryStrategy": {
+          "$ref": "#/definitions/retryStrategy"
+        }
+      },
+      "required": ["name"],
+      "oneOf": [
+        {
+          "required": ["inlineScript"]
+        },
+        {
+          "required": ["script"]
+        },
+        {
+          "required": ["containerSet"]
+        }
+      ]
+    },
+    "containerTemplate": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source": {
+          "type": "string",
+          "description": "Script content"
+        },
+        "inlineScript": {
+          "type": "string",
+          "description": "Inline bash script"
+        },
+        "env": {
+          "$ref": "#/definitions/envVars"
+        },
+        "volumeMounts": {
+          "$ref": "#/definitions/volumeMounts"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      },
+      "required": ["name"]
+    },
+    "argoScript": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source": {
+          "type": "string",
+          "description": "Script source code"
+        },
+        "env": {
+          "$ref": "#/definitions/envVars"
+        },
+        "volumeMounts": {
+          "$ref": "#/definitions/volumeMounts"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      },
+      "required": ["image", "source"]
+    },
+    "containerSet": {
+      "type": "object",
+      "properties": {
+        "containers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/container"
+          }
+        },
+        "volumeMounts": {
+          "$ref": "#/definitions/volumeMounts"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        }
+      },
+      "required": ["containers"]
+    },
+    "container": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "image": {
+          "type": "string"
+        },
+        "containerTemplate": {
+          "type": "string",
+          "description": "Reference to a container template"
+        },
+        "command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "inlineScript": {
+          "type": "string"
+        },
+        "env": {
+          "$ref": "#/definitions/envVars"
+        },
+        "resources": {
+          "$ref": "#/definitions/resources"
+        },
+        "dependencies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Container dependencies"
+        },
+        "volumeMounts": {
+          "$ref": "#/definitions/volumeMounts"
+        }
+      },
+      "required": ["name"],
+      "oneOf": [
+        {
+          "required": ["containerTemplate"]
+        },
+        {
+          "required": ["image"]
+        },
+        {
+          "required": ["inlineScript"]
+        }
+      ]
+    },
+    "envVars": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "value": {
+            "type": "string"
+          },
+          "valueFrom": {
+            "type": "string",
+            "description": "Reference to secret or variable using {{SECRETS.NAME}} or {{VARIABLES.NAME}}"
+          }
+        },
+        "required": ["name"],
+        "oneOf": [
+          {
+            "required": ["value"]
+          },
+          {
+            "required": ["valueFrom"]
+          }
+        ]
+      }
+    },
+    "arguments": {
+      "type": "object",
+      "properties": {
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              },
+              "yamlObject": {
+                "type": "object"
+              }
+            },
+            "required": ["name"],
+            "oneOf": [
+              {
+                "required": ["value"]
+              },
+              {
+                "required": ["yamlObject"]
+              }
+            ]
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "from": {
+                "type": "string"
+              }
+            },
+            "required": ["name", "path"]
+          }
+        }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "default": {
+                "type": "string"
+              }
+            },
+            "required": ["name"]
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": ["name", "path"]
+          }
+        }
+      }
+    },
+    "outputs": {
+      "type": "object",
+      "properties": {
+        "parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "valueFrom": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "jqFilter": {
+                    "type": "string"
+                  },
+                  "jsonPath": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "required": ["name", "valueFrom"]
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": ["name", "path"]
+          }
+        }
+      }
+    },
+    "volumeMounts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "mountPath": {
+            "type": "string"
+          },
+          "subPath": {
+            "type": "string"
+          },
+          "readOnly": {
+            "type": "boolean"
+          }
+        },
+        "required": ["name", "mountPath"]
+      }
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "properties": {
+            "memory": {
+              "type": "string",
+              "pattern": "^[0-9]+[KMG]i?$"
+            },
+            "cpu": {
+              "type": "string",
+              "pattern": "^[0-9]+m?$"
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "memory": {
+              "type": "string",
+              "pattern": "^[0-9]+[KMG]i?$"
+            },
+            "cpu": {
+              "type": "string",
+              "pattern": "^[0-9]+m?$"
+            }
+          }
+        }
+      }
+    },
+    "retryStrategy": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "retryPolicy": {
+          "type": "string",
+          "enum": ["Always", "OnFailure", "OnError", "OnTransientError"]
+        },
+        "backoff": {
+          "type": "object",
+          "properties": {
+            "duration": {
+              "type": "string",
+              "pattern": "^[0-9]+(s|m|h)$"
+            },
+            "factor": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "maxDuration": {
+              "type": "string",
+              "pattern": "^[0-9]+(s|m|h)$"
+            }
+          }
+        }
+      }
+    },
+    "volume": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "emptyDir": {
+          "type": "object",
+          "properties": {}
+        },
+        "configMap": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": ["name"]
+        },
+        "secret": {
+          "type": "object",
+          "properties": {
+            "secretName": {
+              "type": "string"
+            }
+          },
+          "required": ["secretName"]
+        }
+      },
+      "required": ["name"]
+    },
+    "volumeClaimTemplate": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "storageClassName": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": ["name"]
+        },
+        "spec": {
+          "type": "object",
+          "properties": {
+            "accessModes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["ReadWriteOnce", "ReadOnlyMany", "ReadWriteMany"]
+              }
+            },
+            "resources": {
+              "type": "object",
+              "properties": {
+                "requests": {
+                  "type": "object",
+                  "properties": {
+                    "storage": {
+                      "type": "string",
+                      "pattern": "^[0-9]+[KMG]i$"
+                    }
+                  },
+                  "required": ["storage"]
+                }
+              },
+              "required": ["requests"]
+            }
+          },
+          "required": ["accessModes", "resources"]
+        }
+      },
+      "required": ["metadata", "spec"]
+    }
+  }
+}

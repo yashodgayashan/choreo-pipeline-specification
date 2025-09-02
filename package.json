@@ -1,0 +1,36 @@
+{
+  "name": "choreo-pipeline-specification",
+  "version": "1.0.0",
+  "description": "Choreo Pipeline Specification - YAML-based CI/CD pipeline configuration",
+  "scripts": {
+    "validate": "node scripts/validate.js",
+    "schema-check": "ajv compile -s schemas/pipeline-schema.json",
+    "validate-schema": "ajv validate -s schemas/pipeline-schema.json -d",
+    "lint": "yamllint examples/",
+    "test": "npm run validate && npm run schema-check"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wso2/choreo-pipeline-specification.git"
+  },
+  "keywords": [
+    "choreo",
+    "pipeline",
+    "ci-cd",
+    "yaml",
+    "specification",
+    "wso2"
+  ],
+  "author": "WSO2",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/wso2/choreo-pipeline-specification/issues"
+  },
+  "homepage": "https://github.com/wso2/choreo-pipeline-specification#readme",
+  "devDependencies": {
+    "ajv": "^8.12.0",
+    "ajv-cli": "^5.0.0",
+    "js-yaml": "^4.1.0",
+    "yaml-lint": "^1.7.0"
+  }
+}

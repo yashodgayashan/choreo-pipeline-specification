@@ -1,0 +1,162 @@
+# Environment Variables Example
+# Use case: Learn how to use variables and secrets in your pipelines
+# Prerequisites: Set VARIABLES and SECRETS in Choreo Console
+
+pipelineType: ci
+version: "1.0"
+
+# Pipeline parameters from Choreo Console Variables
+arguments:
+  parameters:
+    - name: app_name
+      value: "{{VARIABLES.APP_NAME}}"          # e.g., "my-awesome-app"
+    - name: environment
+      value: "{{VARIABLES.ENVIRONMENT}}"       # e.g., "staging"
+    - name: node_version
+      value: "{{VARIABLES.NODE_VERSION}}"      # e.g., "18"
+
+steps:
+  # Step 1: Show environment variable usage
+  - name: Environment Setup
+    env:
+      # Using pipeline arguments
+      - name: APP_NAME
+        value: "{{arguments.parameters.app_name}}"
+      - name: ENVIRONMENT
+        value: "{{arguments.parameters.environment}}"
+      
+      # Using Choreo Variables directly
+      - name: BUILD_NUMBER
+        value: "{{VARIABLES.BUILD_NUMBER}}"
+      - name: REGION
+        value: "{{VARIABLES.AWS_REGION}}"
+      
+      # Using Choreo Secrets (sensitive data)
+      - name: DATABASE_URL
+        value: "{{SECRETS.DATABASE_URL}}"
+      - name: API_TOKEN
+        value: "{{SECRETS.API_TOKEN}}"
+      
+      # System variables (automatically available)
+      - name: GIT_BRANCH
+        value: "{{CI_BRANCH}}"
+      - name: GIT_COMMIT
+        value: "{{CI_COMMIT_SHA}}"
+        
+    inlineScript: |
+      #!/bin/bash
+      echo "=== Environment Information ==="
+      echo "App Name: $APP_NAME"
+      echo "Environment: $ENVIRONMENT"
+      echo "Region: $REGION"
+      echo "Git Branch: $GIT_BRANCH"
+      echo "Git Commit: ${GIT_COMMIT:0:8}"  # First 8 characters
+      echo "Build Number: $BUILD_NUMBER"
+      
+      # Never log secrets!
+      echo "Database configured: $([ -n "$DATABASE_URL" ] && echo "✓" || echo "✗")"
+      echo "API token configured: $([ -n "$API_TOKEN" ] && echo "✓" || echo "✗")"
+
+  # Step 2: Conditional execution based on environment
+  - name: Development Setup
+    when: "{{arguments.parameters.environment}} == 'development'"
+    env:
+      - name: LOG_LEVEL
+        value: "debug"
+      - name: ENABLE_DEBUG
+        value: "true"
+    inlineScript: |
+      #!/bin/bash
+      echo "🚧 Setting up development environment"
+      echo "Log level: $LOG_LEVEL"
+      echo "Debug mode: $ENABLE_DEBUG"
+
+  # Step 3: Production setup (different configuration)
+  - name: Production Setup
+    when: "{{arguments.parameters.environment}} == 'production'"
+    env:
+      - name: LOG_LEVEL
+        value: "info"
+      - name: ENABLE_DEBUG
+        value: "false"
+      - name: MONITORING_ENABLED
+        value: "true"
+    inlineScript: |
+      #!/bin/bash
+      echo "🚀 Setting up production environment"
+      echo "Log level: $LOG_LEVEL"
+      echo "Debug mode: $ENABLE_DEBUG"
+      echo "Monitoring: $MONITORING_ENABLED"
+
+  # Step 4: Build with environment-specific configuration
+  - name: Build Application
+    container:
+      image: "node:{{arguments.parameters.node_version}}"
+    env:
+      # Combine different variable types
+      - name: APP_VERSION
+        value: "{{VARIABLES.VERSION}}-{{CI_BUILD_NUMBER}}"
+      - name: BUILD_ENV
+        value: "{{arguments.parameters.environment}}"
+      - name: DOCKER_REGISTRY
+        value: "{{VARIABLES.DOCKER_REGISTRY}}"
+    inlineScript: |
+      #!/bin/bash
+      echo "📦 Building $APP_NAME version $APP_VERSION"
+      echo "Target environment: $BUILD_ENV"
+      
+      # Simulate build process
+      npm ci
+      npm run build:$BUILD_ENV
+      
+      echo "✅ Build completed successfully"
+      echo "Registry: $DOCKER_REGISTRY"
+      echo "Final version: $APP_VERSION"
+
+  # Step 5: Dynamic configuration based on branch
+  - name: Branch-Specific Actions
+    when: "{{CI_BRANCH}} == 'main'"
+    env:
+      - name: DEPLOY_TARGET
+        value: "{{VARIABLES.PROD_DEPLOYMENT_TARGET}}"
+      - name: NOTIFICATION_CHANNEL
+        value: "{{VARIABLES.PROD_SLACK_CHANNEL}}"
+    inlineScript: |
+      #!/bash/bash
+      echo "🎯 Main branch detected - production pipeline"
+      echo "Deploy target: $DEPLOY_TARGET"
+      echo "Notifications: $NOTIFICATION_CHANNEL"
+      
+      # Additional production steps would go here
+      echo "Running production-specific validations..."
+      
+  # Step 6: Feature branch handling
+  - name: Feature Branch Actions
+    when: "{{CI_BRANCH}} != 'main' && {{CI_BRANCH}} != 'develop'"
+    env:
+      - name: PREVIEW_URL
+        value: "https://{{CI_BRANCH}}.preview.{{VARIABLES.DOMAIN}}"
+    inlineScript: |
+      #!/bin/bash
+      echo "🌿 Feature branch detected: {{CI_BRANCH}}"
+      echo "Preview URL: $PREVIEW_URL"
+      
+      # Create preview environment
+      echo "Setting up preview environment..."
+      
+# Required Variables (set in Choreo Console):
+# VARIABLES:
+#   APP_NAME: "my-awesome-app"
+#   ENVIRONMENT: "staging"
+#   NODE_VERSION: "18"
+#   BUILD_NUMBER: "123"
+#   AWS_REGION: "us-east-1"
+#   VERSION: "1.2.3"
+#   DOCKER_REGISTRY: "myregistry.com"
+#   PROD_DEPLOYMENT_TARGET: "production-cluster"
+#   PROD_SLACK_CHANNEL: "#deployments"
+#   DOMAIN: "mycompany.com"
+#
+# SECRETS:
+#   DATABASE_URL: "postgresql://username:password@hostname:5432/database_name"
+#   API_TOKEN: "your-api-token-here"

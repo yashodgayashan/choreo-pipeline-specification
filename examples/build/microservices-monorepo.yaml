@@ -1,0 +1,286 @@
+# Microservices Monorepo Pipeline Example
+# Use case: Build multiple services in a monorepo with path-based filtering
+# Prerequisites: Monorepo structure with multiple service directories
+
+pipelineType: ci
+version: "1.0"
+
+arguments:
+  parameters:
+    - name: affected_services
+      value: "{{VARIABLES.AFFECTED_SERVICES}}"  # Comma-separated service names
+    - name: version
+      value: "{{VARIABLES.VERSION}}"
+    - name: registry
+      value: "{{VARIABLES.DOCKER_REGISTRY}}"
+
+steps:
+  # Step 1: Detect changed services
+  - name: Service Change Detection
+    inlineScript: |
+      #!/bin/bash
+      echo "🔍 Detecting changed microservices..."
+      
+      # Get changed files since last commit
+      CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+      echo "Changed files: $CHANGED_FILES"
+      
+      # Detect affected services based on file paths
+      SERVICES=()
+      for file in $CHANGED_FILES; do
+        if [[ $file == services/user-service/* ]]; then
+          SERVICES+=("user-service")
+        elif [[ $file == services/order-service/* ]]; then
+          SERVICES+=("order-service")
+        elif [[ $file == services/payment-service/* ]]; then
+          SERVICES+=("payment-service")
+        elif [[ $file == services/notification-service/* ]]; then
+          SERVICES+=("notification-service")
+        elif [[ $file == shared/* ]]; then
+          # Shared code affects all services
+          SERVICES=("user-service" "order-service" "payment-service" "notification-service")
+          break
+        fi
+      done
+      
+      # Remove duplicates and create comma-separated list
+      UNIQUE_SERVICES=($(printf "%s\n" "${SERVICES[@]}" | sort -u))
+      AFFECTED_SERVICES=$(IFS=,; echo "${UNIQUE_SERVICES[*]}")
+      
+      echo "Affected services: $AFFECTED_SERVICES"
+      echo "$AFFECTED_SERVICES" > /tmp/affected-services.txt
+
+  # Step 2: Build User Service (conditional)
+  - name: Build User Service
+    when: "contains('{{arguments.parameters.affected_services}}', 'user-service') || fileExists('/tmp/affected-services.txt') && contains(file('/tmp/affected-services.txt'), 'user-service')"
+    template: choreo/docker-build@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "services/user-service/Dockerfile"
+        - name: context
+          value: "."
+        - name: image_name
+          value: "{{arguments.parameters.registry}}/user-service"
+        - name: image_tag
+          value: "{{arguments.parameters.version}}"
+        - name: build_args
+          yamlObject:
+            SERVICE_NAME: "user-service"
+            BUILD_VERSION: "{{arguments.parameters.version}}"
+
+  # Step 3: Test User Service
+  - name: Test User Service
+    when: "contains('{{arguments.parameters.affected_services}}', 'user-service') || fileExists('/tmp/affected-services.txt') && contains(file('/tmp/affected-services.txt'), 'user-service')"
+    container:
+      image: "node:18"
+      workingDir: "/workspace/services/user-service"
+    inlineScript: |
+      #!/bin/bash
+      echo "🧪 Testing user service..."
+      npm ci
+      npm run test:unit
+      npm run test:integration
+
+  # Step 4: Build Order Service (conditional)
+  - name: Build Order Service
+    when: "contains('{{arguments.parameters.affected_services}}', 'order-service') || fileExists('/tmp/affected-services.txt') && contains(file('/tmp/affected-services.txt'), 'order-service')"
+    template: choreo/docker-build@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "services/order-service/Dockerfile"
+        - name: context
+          value: "."
+        - name: image_name
+          value: "{{arguments.parameters.registry}}/order-service"
+        - name: image_tag
+          value: "{{arguments.parameters.version}}"
+        - name: build_args
+          yamlObject:
+            SERVICE_NAME: "order-service"
+            BUILD_VERSION: "{{arguments.parameters.version}}"
+
+  # Step 5: Test Order Service
+  - name: Test Order Service
+    when: "contains('{{arguments.parameters.affected_services}}', 'order-service') || fileExists('/tmp/affected-services.txt') && contains(file('/tmp/affected-services.txt'), 'order-service')"
+    container:
+      image: "node:18"
+      workingDir: "/workspace/services/order-service"
+    inlineScript: |
+      #!/bin/bash
+      echo "🧪 Testing order service..."
+      npm ci
+      npm run test:unit
+      npm run test:integration
+
+  # Step 6: Build Payment Service (conditional)
+  - name: Build Payment Service
+    when: "contains('{{arguments.parameters.affected_services}}', 'payment-service') || fileExists('/tmp/affected-services.txt') && contains(file('/tmp/affected-services.txt'), 'payment-service')"
+    template: choreo/docker-build@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "services/payment-service/Dockerfile"
+        - name: context
+          value: "."
+        - name: image_name
+          value: "{{arguments.parameters.registry}}/payment-service"
+        - name: image_tag
+          value: "{{arguments.parameters.version}}"
+        - name: build_args
+          yamlObject:
+            SERVICE_NAME: "payment-service"
+            BUILD_VERSION: "{{arguments.parameters.version}}"
+
+  # Step 7: Security Scanning (parallel for all affected services)
+  - name: Security Scan All Services
+    inlineScript: |
+      #!/bin/bash
+      echo "🔒 Running security scans for affected services..."
+      
+      SERVICES=$(cat /tmp/affected-services.txt)
+      IFS=',' read -ra SERVICE_ARRAY <<< "$SERVICES"
+      
+      for service in "${SERVICE_ARRAY[@]}"; do
+        echo "Scanning $service..."
+        # Run Trivy scan for each service image
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy:latest image \
+          --exit-code 0 --severity HIGH,CRITICAL \
+          --format table \
+          "{{arguments.parameters.registry}}/$service:{{arguments.parameters.version}}" || true
+      done
+
+  # Step 8: Integration Testing (cross-service)
+  - name: Cross-Service Integration Tests
+    when: "fileExists('/tmp/affected-services.txt')"
+    container:
+      image: "node:18"
+    env:
+      - name: USER_SERVICE_URL
+        value: "http://user-service:3000"
+      - name: ORDER_SERVICE_URL
+        value: "http://order-service:3001"
+      - name: PAYMENT_SERVICE_URL
+        value: "http://payment-service:3002"
+    inlineScript: |
+      #!/bin/bash
+      echo "🔗 Running cross-service integration tests..."
+      
+      cd integration-tests/
+      npm ci
+      
+      # Start service containers for testing
+      docker-compose -f docker-compose.test.yml up -d
+      
+      # Wait for services to be ready
+      sleep 30
+      
+      # Run integration test suite
+      npm run test:integration:cross-service
+      
+      # Cleanup
+      docker-compose -f docker-compose.test.yml down
+
+  # Step 9: Performance Testing (if main branch)
+  - name: Performance Testing
+    when: "{{CI_BRANCH}} == 'main' && fileExists('/tmp/affected-services.txt')"
+    template: choreo/performance-test@v1
+    arguments:
+      parameters:
+        - name: target_url
+          value: "https://staging-api.mycompany.com"
+        - name: test_suite
+          value: "microservices-load-test"
+        - name: virtual_users
+          value: "50"
+        - name: duration
+          value: "3m"
+
+  # Step 10: Deployment to staging (main branch only)
+  - name: Deploy to Staging
+    when: "{{CI_BRANCH}} == 'main' && fileExists('/tmp/affected-services.txt')"
+    inlineScript: |
+      #!/bin/bash
+      echo "🚀 Deploying affected services to staging..."
+      
+      SERVICES=$(cat /tmp/affected-services.txt)
+      IFS=',' read -ra SERVICE_ARRAY <<< "$SERVICES"
+      
+      for service in "${SERVICE_ARRAY[@]}"; do
+        echo "Deploying $service to staging..."
+        
+        # Update Kubernetes deployment
+        kubectl set image deployment/$service-deployment \
+          $service={{arguments.parameters.registry}}/$service:{{arguments.parameters.version}} \
+          -n staging
+        
+        # Wait for rollout
+        kubectl rollout status deployment/$service-deployment -n staging --timeout=300s
+        
+        echo "✅ $service deployed successfully"
+      done
+
+  # Step 11: Smoke Tests
+  - name: Staging Smoke Tests
+    when: "{{CI_BRANCH}} == 'main' && fileExists('/tmp/affected-services.txt')"
+    template: choreo/test-runner@v1
+    arguments:
+      parameters:
+        - name: test_command
+          value: "npm run test:smoke:staging"
+        - name: timeout
+          value: "5m"
+
+  # Step 12: Notification
+  - name: Build Summary Notification
+    template: choreo/slack-notify@v1
+    arguments:
+      parameters:
+        - name: webhook_url
+          value: "{{SECRETS.SLACK_WEBHOOK}}"
+        - name: channel
+          value: "#microservices-builds"
+        - name: message
+          value: "Microservices build completed for: $(cat /tmp/affected-services.txt)"
+        - name: title
+          value: "Monorepo Build Status"
+        - name: color
+          value: "good"
+        - name: fields
+          yamlObject:
+            Branch: "{{CI_BRANCH}}"
+            Version: "{{arguments.parameters.version}}"
+            Affected_Services: "$(cat /tmp/affected-services.txt)"
+            Commit: "{{CI_COMMIT_SHA}}"
+
+# Expected monorepo structure:
+# /
+# ├── services/
+# │   ├── user-service/
+# │   │   ├── Dockerfile
+# │   │   ├── package.json
+# │   │   └── src/
+# │   ├── order-service/
+# │   │   ├── Dockerfile
+# │   │   ├── package.json
+# │   │   └── src/
+# │   ├── payment-service/
+# │   │   └── ...
+# │   └── notification-service/
+# │       └── ...
+# ├── shared/
+# │   ├── utils/
+# │   └── types/
+# ├── integration-tests/
+# └── docker-compose.test.yml
+
+# Required Configuration:
+# VARIABLES:
+#   AFFECTED_SERVICES: "user-service,order-service"  # Can be auto-detected
+#   VERSION: "1.2.3"
+#   DOCKER_REGISTRY: "myregistry.com"
+#
+# SECRETS:
+#   SLACK_WEBHOOK: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"

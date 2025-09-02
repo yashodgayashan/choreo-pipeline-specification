@@ -1,0 +1,381 @@
+# Parallel Testing Pipeline Example
+# Use case: Speed up builds with parallel execution and matrix strategies
+# Prerequisites: Test suites that can run independently
+
+pipelineType: ci
+version: "1.0"
+
+arguments:
+  parameters:
+    - name: app_name
+      value: "{{VARIABLES.APP_NAME}}"
+    - name: node_versions
+      value: "{{VARIABLES.NODE_VERSIONS}}"  # e.g., "16,18,20"
+    - name: test_suites
+      value: "{{VARIABLES.TEST_SUITES}}"   # e.g., "unit,integration,e2e"
+
+steps:
+  # Step 1: Setup and dependency installation (shared)
+  - name: Install Dependencies
+    template: choreo/npm-build@v1
+    arguments:
+      parameters:
+        - name: node_version
+          value: "18"  # Primary version for dependency installation
+        - name: install_only
+          value: "true"
+        - name: cache_dependencies
+          value: "true"
+
+  # Step 2: Lint and static analysis (fast feedback)
+  - name: Code Quality Checks
+    container:
+      image: "node:18"
+    inlineScript: |
+      #!/bin/bash
+      echo "🔍 Running code quality checks..."
+      npm run lint
+      npm run typecheck
+      npm run format:check
+
+  # Step 3: Unit Tests (parallel across Node versions)
+  - name: Unit Tests Node 16
+    container:
+      image: "node:16"
+    when: "contains('{{arguments.parameters.node_versions}}', '16')"
+    inlineScript: |
+      #!/bin/bash
+      echo "🧪 Running unit tests on Node 16..."
+      npm ci --prefer-offline
+      npm run test:unit -- --coverage --reporter=junit --outputFile=test-results-node16.xml
+      cp coverage/lcov.info coverage-node16.lcov
+
+  - name: Unit Tests Node 18
+    container:
+      image: "node:18"
+    when: "contains('{{arguments.parameters.node_versions}}', '18')"
+    inlineScript: |
+      #!/bin/bash
+      echo "🧪 Running unit tests on Node 18..."
+      npm ci --prefer-offline
+      npm run test:unit -- --coverage --reporter=junit --outputFile=test-results-node18.xml
+      cp coverage/lcov.info coverage-node18.lcov
+
+  - name: Unit Tests Node 20
+    container:
+      image: "node:20"
+    when: "contains('{{arguments.parameters.node_versions}}', '20')"
+    inlineScript: |
+      #!/bin/bash
+      echo "🧪 Running unit tests on Node 20..."
+      npm ci --prefer-offline
+      npm run test:unit -- --coverage --reporter=junit --outputFile=test-results-node20.xml
+      cp coverage/lcov.info coverage-node20.lcov
+
+  # Step 4: Integration Tests (parallel by test suite)
+  - name: Integration Tests Database
+    when: "contains('{{arguments.parameters.test_suites}}', 'integration')"
+    container:
+      image: "node:18"
+    env:
+      - name: DATABASE_URL
+        value: "{{SECRETS.TEST_DATABASE_URL}}"
+      - name: TEST_SUITE
+        value: "database"
+    inlineScript: |
+      #!/bin/bash
+      echo "🗄️ Running database integration tests..."
+      npm ci --prefer-offline
+      npm run test:integration:database -- --reporter=junit --outputFile=integration-db-results.xml
+
+  - name: Integration Tests API
+    when: "contains('{{arguments.parameters.test_suites}}', 'integration')"
+    container:
+      image: "node:18"
+    env:
+      - name: API_BASE_URL
+        value: "{{VARIABLES.TEST_API_URL}}"
+      - name: TEST_SUITE
+        value: "api"
+    inlineScript: |
+      #!/bin/bash
+      echo "🌐 Running API integration tests..."
+      npm ci --prefer-offline
+      npm run test:integration:api -- --reporter=junit --outputFile=integration-api-results.xml
+
+  - name: Integration Tests External Services
+    when: "contains('{{arguments.parameters.test_suites}}', 'integration')"
+    container:
+      image: "node:18"
+    env:
+      - name: EXTERNAL_SERVICE_URL
+        value: "{{VARIABLES.EXTERNAL_SERVICE_URL}}"
+      - name: SERVICE_API_KEY
+        value: "{{SECRETS.SERVICE_API_KEY}}"
+    inlineScript: |
+      #!/bin/bash
+      echo "🔗 Running external service integration tests..."
+      npm ci --prefer-offline
+      npm run test:integration:external -- --reporter=junit --outputFile=integration-external-results.xml
+
+  # Step 5: Security scans (parallel)
+  - name: SAST Security Scan
+    template: choreo/sast-scan@v1
+    arguments:
+      parameters:
+        - name: language
+          value: "javascript"
+        - name: source_path
+          value: "./src"
+        - name: severity_threshold
+          value: "medium"
+        - name: output_format
+          value: "sarif"
+        - name: output_file
+          value: "sast-results.sarif"
+
+  - name: Dependency Security Scan
+    template: choreo/dependency-scan@v1
+    arguments:
+      parameters:
+        - name: package_manager
+          value: "npm"
+        - name: audit_level
+          value: "high"
+        - name: production_only
+          value: "false"
+        - name: output_format
+          value: "json"
+        - name: output_file
+          value: "dependency-scan.json"
+
+  - name: Secret Detection
+    template: choreo/secret-scan@v1
+    arguments:
+      parameters:
+        - name: scan_path
+          value: "."
+        - name: entropy_threshold
+          value: "3.0"
+        - name: output_format
+          value: "json"
+        - name: output_file
+          value: "secrets-scan.json"
+
+  # Step 6: Build application (parallel for different targets)
+  - name: Build Production
+    container:
+      image: "node:18"
+    env:
+      - name: NODE_ENV
+        value: "production"
+      - name: BUILD_TARGET
+        value: "production"
+    inlineScript: |
+      #!/bin/bash
+      echo "🏗️ Building for production..."
+      npm ci --prefer-offline
+      npm run build:prod
+      tar -czf build-production.tar.gz dist/
+
+  - name: Build Staging
+    container:
+      image: "node:18"
+    env:
+      - name: NODE_ENV
+        value: "staging"
+      - name: BUILD_TARGET
+        value: "staging"
+    inlineScript: |
+      #!/bin/bash
+      echo "🏗️ Building for staging..."
+      npm ci --prefer-offline
+      npm run build:staging
+      tar -czf build-staging.tar.gz dist/
+
+  # Step 7: Docker builds (parallel for different platforms)
+  - name: Docker Build AMD64
+    template: choreo/docker-build@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "Dockerfile"
+        - name: context
+          value: "."
+        - name: image_name
+          value: "{{arguments.parameters.app_name}}"
+        - name: image_tag
+          value: "{{VARIABLES.VERSION}}-amd64"
+        - name: platforms
+          yamlObject:
+            - "linux/amd64"
+        - name: push
+          value: "false"
+
+  - name: Docker Build ARM64
+    template: choreo/docker-build@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "Dockerfile"
+        - name: context
+          value: "."
+        - name: image_name
+          value: "{{arguments.parameters.app_name}}"
+        - name: image_tag
+          value: "{{VARIABLES.VERSION}}-arm64"
+        - name: platforms
+          yamlObject:
+            - "linux/arm64"
+        - name: push
+          value: "false"
+
+  # Step 8: E2E Tests (parallel browsers)
+  - name: E2E Tests Chrome
+    when: "contains('{{arguments.parameters.test_suites}}', 'e2e')"
+    template: choreo/e2e-test@v1
+    arguments:
+      parameters:
+        - name: test_suite
+          value: "e2e"
+        - name: browser
+          value: "chrome"
+        - name: headless
+          value: "true"
+        - name: output_file
+          value: "e2e-chrome-results.xml"
+
+  - name: E2E Tests Firefox
+    when: "contains('{{arguments.parameters.test_suites}}', 'e2e')"
+    template: choreo/e2e-test@v1
+    arguments:
+      parameters:
+        - name: test_suite
+          value: "e2e"
+        - name: browser
+          value: "firefox"
+        - name: headless
+          value: "true"
+        - name: output_file
+          value: "e2e-firefox-results.xml"
+
+  # Step 9: Performance testing (parallel load patterns)
+  - name: Performance Test Light Load
+    template: choreo/performance-test@v1
+    arguments:
+      parameters:
+        - name: target_url
+          value: "{{VARIABLES.STAGING_URL}}"
+        - name: virtual_users
+          value: "10"
+        - name: duration
+          value: "2m"
+        - name: test_name
+          value: "light-load"
+        - name: output_file
+          value: "perf-light.json"
+
+  - name: Performance Test Heavy Load
+    template: choreo/performance-test@v1
+    arguments:
+      parameters:
+        - name: target_url
+          value: "{{VARIABLES.STAGING_URL}}"
+        - name: virtual_users
+          value: "100"
+        - name: duration
+          value: "5m"
+        - name: test_name
+          value: "heavy-load"
+        - name: output_file
+          value: "perf-heavy.json"
+
+  # Step 10: Test Results Aggregation
+  - name: Aggregate Test Results
+    inlineScript: |
+      #!/bin/bash
+      echo "📊 Aggregating test results..."
+      
+      # Combine coverage reports
+      npx nyc merge coverage/ .nyc_output/merged-coverage.json
+      npx nyc report --reporter=lcov --reporter=html --temp-dir=.nyc_output
+      
+      # Combine test results
+      echo "=== Test Summary ===" > test-summary.txt
+      echo "Node.js Versions Tested: {{arguments.parameters.node_versions}}" >> test-summary.txt
+      echo "Test Suites: {{arguments.parameters.test_suites}}" >> test-summary.txt
+      echo "" >> test-summary.txt
+      
+      # Count test results
+      if [ -f "test-results-node16.xml" ]; then
+        NODE16_TESTS=$(xmllint --xpath "count(//testcase)" test-results-node16.xml)
+        echo "Node 16 Tests: $NODE16_TESTS" >> test-summary.txt
+      fi
+      
+      if [ -f "test-results-node18.xml" ]; then
+        NODE18_TESTS=$(xmllint --xpath "count(//testcase)" test-results-node18.xml)
+        echo "Node 18 Tests: $NODE18_TESTS" >> test-summary.txt
+      fi
+      
+      if [ -f "test-results-node20.xml" ]; then
+        NODE20_TESTS=$(xmllint --xpath "count(//testcase)" test-results-node20.xml)
+        echo "Node 20 Tests: $NODE20_TESTS" >> test-summary.txt
+      fi
+      
+      echo "✅ Test aggregation complete"
+      cat test-summary.txt
+
+  # Step 11: Upload test artifacts
+  - name: Upload Test Artifacts
+    template: choreo/artifact-upload@v1
+    arguments:
+      parameters:
+        - name: name
+          value: "test-results"
+        - name: path
+          value: "."
+        - name: include
+          yamlObject:
+            - "*.xml"
+            - "*.json"
+            - "*.sarif"
+            - "coverage/"
+            - "test-summary.txt"
+
+  # Step 12: Success notification
+  - name: Build Success Notification
+    when: "{{workflow.status}} == 'Succeeded'"
+    template: choreo/slack-notify@v1
+    arguments:
+      parameters:
+        - name: webhook_url
+          value: "{{SECRETS.SLACK_WEBHOOK}}"
+        - name: channel
+          value: "#ci-builds"
+        - name: message
+          value: "✅ Parallel build completed successfully for {{arguments.parameters.app_name}}"
+        - name: title
+          value: "Parallel Pipeline Success"
+        - name: color
+          value: "good"
+        - name: fields
+          yamlObject:
+            Node_Versions: "{{arguments.parameters.node_versions}}"
+            Test_Suites: "{{arguments.parameters.test_suites}}"
+            Branch: "{{CI_BRANCH}}"
+            Duration: "{{workflow.duration}}"
+
+# Required Configuration:
+# VARIABLES:
+#   APP_NAME: "my-parallel-app"
+#   NODE_VERSIONS: "16,18,20"
+#   TEST_SUITES: "unit,integration,e2e"
+#   VERSION: "1.0.0"
+#   STAGING_URL: "https://staging.myapp.com"
+#   TEST_API_URL: "https://test-api.myapp.com"
+#   EXTERNAL_SERVICE_URL: "https://external-api.example.com"
+#
+# SECRETS:
+#   TEST_DATABASE_URL: "postgresql://username:password@hostname:5432/test_database"
+#   SERVICE_API_KEY: "your-service-api-key-here"
+#   SLACK_WEBHOOK: "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"

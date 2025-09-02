@@ -1,0 +1,220 @@
+# Scheduled Tasks Automation Pipeline
+# This pipeline demonstrates scheduled automation tasks
+# Use Case: Database backup, cleanup, monitoring, and maintenance
+# Configuration managed through Choreo Console
+
+arguments:
+  parameters:
+    - name: environment
+      value: "{{VARIABLES.ENVIRONMENT}}"
+    - name: retention_days
+      value: "30"
+
+steps:
+  # Database Backup
+  - name: Database Backup
+    inlineScript: |
+      #!/bin/bash
+      echo "Starting database backup..."
+      
+      TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+      BACKUP_FILE="backup_${TIMESTAMP}.sql"
+      
+      # Perform database backup
+      PGPASSWORD=$DB_PASSWORD pg_dump \
+        -h $DB_HOST \
+        -p $DB_PORT \
+        -U $DB_USER \
+        -d $DB_NAME \
+        -f "/backups/${BACKUP_FILE}"
+      
+      # Compress backup
+      gzip "/backups/${BACKUP_FILE}"
+      
+      # Upload to cloud storage
+      aws s3 cp "/backups/${BACKUP_FILE}.gz" \
+        "s3://backups/database/${BACKUP_FILE}.gz"
+      
+      echo "Backup completed: ${BACKUP_FILE}.gz"
+    env:
+      - name: DB_HOST
+        value: "{{VARIABLES.DB_HOST}}"
+      - name: DB_PORT
+        value: "{{VARIABLES.DB_PORT}}"
+      - name: DB_NAME
+        value: "{{VARIABLES.DB_NAME}}"
+      - name: DB_USER
+        value: "{{VARIABLES.DB_USER}}"
+      - name: DB_PASSWORD
+        value: "{{SECRETS.DB_PASSWORD}}"
+      - name: AWS_ACCESS_KEY_ID
+        value: "{{SECRETS.AWS_ACCESS_KEY}}"
+      - name: AWS_SECRET_ACCESS_KEY
+        value: "{{SECRETS.AWS_SECRET_KEY}}"
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "500m"
+    retryStrategy:
+      limit: 2
+      retryPolicy: OnFailure
+
+  # Parallel maintenance tasks
+  - - name: Clean Old Logs
+      inlineScript: |
+        #!/bin/bash
+        echo "Cleaning old logs..."
+        
+        # Clean application logs older than retention period
+        find /var/log/app -type f -mtime +{{arguments.parameters.retention_days}} -delete
+        
+        # Clean temporary files
+        find /tmp -type f -mtime +7 -delete
+        
+        # Report space saved
+        df -h /var/log
+        echo "Log cleanup completed"
+    
+    - name: Clean Old Backups
+      inlineScript: |
+        #!/bin/bash
+        echo "Cleaning old backups..."
+        
+        # List and remove old backups from S3
+        CUTOFF_DATE=$(date -d "{{arguments.parameters.retention_days}} days ago" +%Y%m%d)
+        
+        aws s3 ls s3://backups/database/ | while read -r line; do
+          FILE_DATE=$(echo $line | grep -oE '[0-9]{8}' | head -1)
+          if [ "$FILE_DATE" -lt "$CUTOFF_DATE" ]; then
+            FILE_NAME=$(echo $line | awk '{print $4}')
+            aws s3 rm "s3://backups/database/$FILE_NAME"
+            echo "Deleted old backup: $FILE_NAME"
+          fi
+        done
+        
+        echo "Backup cleanup completed"
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          value: "{{SECRETS.AWS_ACCESS_KEY}}"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "{{SECRETS.AWS_SECRET_KEY}}"
+    
+    - name: Clean Docker Resources
+      inlineScript: |
+        #!/bin/bash
+        echo "Cleaning Docker resources..."
+        
+        # Remove stopped containers
+        docker container prune -f
+        
+        # Remove unused images
+        docker image prune -a -f --filter "until=24h"
+        
+        # Remove unused volumes
+        docker volume prune -f
+        
+        # Remove unused networks
+        docker network prune -f
+        
+        echo "Docker cleanup completed"
+
+  # Health Checks
+  - name: System Health Check
+    inlineScript: |
+      #!/bin/bash
+      echo "Running system health checks..."
+      
+      # Check disk usage
+      DISK_USAGE=$(df -h / | awk 'NR==2 {print $5}' | sed 's/%//')
+      if [ "$DISK_USAGE" -gt 80 ]; then
+        echo "WARNING: Disk usage is ${DISK_USAGE}%"
+        ALERT_NEEDED=true
+      fi
+      
+      # Check memory usage
+      MEMORY_USAGE=$(free | grep Mem | awk '{print int($3/$2 * 100)}')
+      if [ "$MEMORY_USAGE" -gt 90 ]; then
+        echo "WARNING: Memory usage is ${MEMORY_USAGE}%"
+        ALERT_NEEDED=true
+      fi
+      
+      # Check database connectivity
+      PGPASSWORD=$DB_PASSWORD psql -h $DB_HOST -U $DB_USER -d $DB_NAME -c "SELECT 1" > /dev/null 2>&1
+      if [ $? -ne 0 ]; then
+        echo "ERROR: Database connection failed"
+        ALERT_NEEDED=true
+      fi
+      
+      # Send alert if needed
+      if [ "$ALERT_NEEDED" = true ]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"System health check detected issues in {{arguments.parameters.environment}} environment"}' \
+          $SLACK_WEBHOOK
+      else
+        echo "All health checks passed"
+      fi
+    env:
+      - name: DB_HOST
+        value: "{{VARIABLES.DB_HOST}}"
+      - name: DB_USER
+        value: "{{VARIABLES.DB_USER}}"
+      - name: DB_PASSWORD
+        value: "{{SECRETS.DB_PASSWORD}}"
+      - name: SLACK_WEBHOOK
+        value: "{{SECRETS.SLACK_WEBHOOK_URL}}"
+
+  # Update SSL Certificates
+  - name: Certificate Renewal Check
+    inlineScript: |
+      #!/bin/bash
+      echo "Checking SSL certificates..."
+      
+      # Check certificate expiration
+      for domain in $DOMAINS; do
+        EXPIRY=$(echo | openssl s_client -servername $domain -connect $domain:443 2>/dev/null | \
+                 openssl x509 -noout -enddate | cut -d= -f2)
+        EXPIRY_EPOCH=$(date -d "$EXPIRY" +%s)
+        CURRENT_EPOCH=$(date +%s)
+        DAYS_LEFT=$(( ($EXPIRY_EPOCH - $CURRENT_EPOCH) / 86400 ))
+        
+        echo "Certificate for $domain expires in $DAYS_LEFT days"
+        
+        if [ "$DAYS_LEFT" -lt 30 ]; then
+          echo "Renewing certificate for $domain..."
+          certbot renew --domain $domain --non-interactive
+        fi
+      done
+    env:
+      - name: DOMAINS
+        value: "{{VARIABLES.DOMAINS}}"
+
+  # Generate Reports
+  - name: Generate Maintenance Report
+    inlineScript: |
+      #!/bin/bash
+      echo "Generating maintenance report..."
+      
+      REPORT_DATE=$(date +%Y-%m-%d)
+      
+      cat > /tmp/maintenance_report.txt <<EOF
+      Scheduled Maintenance Report
+      ============================
+      Date: $REPORT_DATE
+      Environment: {{arguments.parameters.environment}}
+      
+      Tasks Completed:
+      - Database backup
+      - Log cleanup (retention: {{arguments.parameters.retention_days}} days)
+      - Old backup removal
+      - Docker resource cleanup
+      - System health check
+      - SSL certificate check
+      
+      Status: SUCCESS
+      EOF
+      
+      # Send report via email
+      cat /tmp/maintenance_report.txt | mail -s "Maintenance Report - $REPORT_DATE" \
+        {{VARIABLES.ADMIN_EMAIL}}
+      
+      echo "Report sent to {{VARIABLES.ADMIN_EMAIL}}"

@@ -1,0 +1,338 @@
+# Data Processing Automation Pipeline
+# This pipeline demonstrates automated data processing workflows
+# Use Case: Daily ETL processing, report generation, and distribution
+# Configuration managed through Choreo Console
+
+# Global configuration
+arguments:
+  parameters:
+    - name: processing_date
+      value: "{{VARIABLES.PROCESSING_DATE}}"
+    - name: data_source
+      value: "{{VARIABLES.DATA_SOURCE_URL}}"
+    - name: notification_email
+      value: "{{VARIABLES.ADMIN_EMAIL}}"
+
+# Persistent storage for data
+volumeClaimTemplates:
+  - metadata:
+      name: data-storage
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: "50Gi"
+
+volumes:
+  - name: temp-processing
+    emptyDir:
+      sizeLimit: "10Gi"
+
+steps:
+  # Step 1: Data Extraction
+  - name: Extract Data
+    inlineScript: |
+      #!/bin/bash
+      echo "Starting data extraction for date: {{arguments.parameters.processing_date}}"
+      
+      # Connect to data source and extract
+      curl -H "Authorization: Bearer $API_TOKEN" \
+           "{{arguments.parameters.data_source}}/export?date={{arguments.parameters.processing_date}}" \
+           -o /data/raw/daily_data.csv
+      
+      # Validate extraction
+      if [ ! -f "/data/raw/daily_data.csv" ]; then
+        echo "Data extraction failed"
+        exit 1
+      fi
+      
+      echo "Extracted $(wc -l < /data/raw/daily_data.csv) records"
+    env:
+      - name: API_TOKEN
+        value: "{{SECRETS.DATA_API_TOKEN}}"
+    volumeMounts:
+      - name: data-storage
+        mountPath: /data
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "500m"
+    retryStrategy:
+      limit: 3
+      retryPolicy: OnFailure
+      backoff:
+        duration: "1m"
+
+  # Step 2: Data Validation
+  - name: Validate Data
+    inlineScript: |
+      #!/bin/bash
+      echo "Validating data quality..."
+      
+      python3 <<EOF
+      import pandas as pd
+      import sys
+      
+      # Load data
+      df = pd.read_csv('/data/raw/daily_data.csv')
+      
+      # Validation checks
+      errors = []
+      
+      # Check for required columns
+      required_cols = ['id', 'timestamp', 'value', 'status']
+      missing_cols = [col for col in required_cols if col not in df.columns]
+      if missing_cols:
+          errors.append(f"Missing columns: {missing_cols}")
+      
+      # Check for null values
+      null_counts = df.isnull().sum()
+      if null_counts.any():
+          errors.append(f"Null values found: {null_counts[null_counts > 0].to_dict()}")
+      
+      # Check data types
+      if 'timestamp' in df.columns:
+          try:
+              pd.to_datetime(df['timestamp'])
+          except:
+              errors.append("Invalid timestamp format")
+      
+      # Report results
+      if errors:
+          print("Validation failed:")
+          for error in errors:
+              print(f"  - {error}")
+          sys.exit(1)
+      else:
+          print(f"Validation passed: {len(df)} records validated")
+          print(f"Date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
+      EOF
+    volumeMounts:
+      - name: data-storage
+        mountPath: /data
+    image: "python:3.9-slim"
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "500m"
+
+  # Step 3: Parallel Processing
+  - - name: Transform Data
+      inlineScript: |
+        #!/bin/bash
+        echo "Transforming data..."
+        
+        python3 <<EOF
+        import pandas as pd
+        import numpy as np
+        
+        # Load raw data
+        df = pd.read_csv('/data/raw/daily_data.csv')
+        
+        # Transformations
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        df['date'] = df['timestamp'].dt.date
+        df['hour'] = df['timestamp'].dt.hour
+        
+        # Aggregations
+        hourly_stats = df.groupby(['date', 'hour']).agg({
+            'value': ['mean', 'min', 'max', 'std'],
+            'status': lambda x: x.mode()[0] if not x.empty else None
+        }).reset_index()
+        
+        # Save transformed data
+        df.to_parquet('/data/processed/transformed_data.parquet', index=False)
+        hourly_stats.to_csv('/data/processed/hourly_stats.csv', index=False)
+        
+        print(f"Transformed {len(df)} records")
+        print(f"Generated {len(hourly_stats)} hourly statistics")
+        EOF
+      volumeMounts:
+        - name: data-storage
+          mountPath: /data
+      image: "python:3.9-slim"
+      resources:
+        requests:
+          memory: "2Gi"
+          cpu: "1000m"
+    
+    - name: Generate Reports
+      inlineScript: |
+        #!/bin/bash
+        echo "Generating reports..."
+        
+        python3 <<EOF
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        from datetime import datetime
+        
+        # Load processed data
+        df = pd.read_parquet('/data/processed/transformed_data.parquet')
+        stats = pd.read_csv('/data/processed/hourly_stats.csv')
+        
+        # Generate visualizations
+        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+        
+        # Time series plot
+        axes[0, 0].plot(df['timestamp'], df['value'])
+        axes[0, 0].set_title('Value Over Time')
+        axes[0, 0].set_xlabel('Time')
+        axes[0, 0].set_ylabel('Value')
+        
+        # Distribution plot
+        axes[0, 1].hist(df['value'], bins=50)
+        axes[0, 1].set_title('Value Distribution')
+        axes[0, 1].set_xlabel('Value')
+        axes[0, 1].set_ylabel('Frequency')
+        
+        # Hourly pattern
+        hourly_avg = df.groupby('hour')['value'].mean()
+        axes[1, 0].bar(hourly_avg.index, hourly_avg.values)
+        axes[1, 0].set_title('Average Value by Hour')
+        axes[1, 0].set_xlabel('Hour')
+        axes[1, 0].set_ylabel('Average Value')
+        
+        # Status distribution
+        status_counts = df['status'].value_counts()
+        axes[1, 1].pie(status_counts.values, labels=status_counts.index, autopct='%1.1f%%')
+        axes[1, 1].set_title('Status Distribution')
+        
+        plt.tight_layout()
+        plt.savefig('/data/reports/daily_report.png', dpi=150)
+        
+        # Generate summary
+        with open('/data/reports/summary.txt', 'w') as f:
+            f.write(f"Daily Data Processing Report\\n")
+            f.write(f"{'='*50}\\n")
+            f.write(f"Processing Date: {datetime.now().strftime('%Y-%m-%d')}\\n")
+            f.write(f"Total Records: {len(df)}\\n")
+            f.write(f"Average Value: {df['value'].mean():.2f}\\n")
+            f.write(f"Min Value: {df['value'].min():.2f}\\n")
+            f.write(f"Max Value: {df['value'].max():.2f}\\n")
+            f.write(f"Std Dev: {df['value'].std():.2f}\\n")
+        
+        print("Reports generated successfully")
+        EOF
+      volumeMounts:
+        - name: data-storage
+          mountPath: /data
+      image: "python:3.9-slim"
+      resources:
+        requests:
+          memory: "1Gi"
+          cpu: "1000m"
+
+  # Step 4: Data Quality Checks
+  - name: Quality Assurance
+    inlineScript: |
+      #!/bin/bash
+      echo "Running quality checks..."
+      
+      # Check if all expected files exist
+      REQUIRED_FILES=(
+        "/data/processed/transformed_data.parquet"
+        "/data/processed/hourly_stats.csv"
+        "/data/reports/daily_report.png"
+        "/data/reports/summary.txt"
+      )
+      
+      for file in "${REQUIRED_FILES[@]}"; do
+        if [ ! -f "$file" ]; then
+          echo "Missing required file: $file"
+          exit 1
+        fi
+      done
+      
+      # Check file sizes
+      MIN_SIZE=1000  # 1KB minimum
+      for file in "${REQUIRED_FILES[@]}"; do
+        size=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file" 2>/dev/null)
+        if [ "$size" -lt "$MIN_SIZE" ]; then
+          echo "File too small: $file (${size} bytes)"
+          exit 1
+        fi
+      done
+      
+      echo "Quality checks passed"
+    volumeMounts:
+      - name: data-storage
+        mountPath: /data
+
+  # Step 5: Archive and Store
+  - name: Archive Results
+    inlineScript: |
+      #!/bin/bash
+      echo "Archiving results..."
+      
+      ARCHIVE_NAME="data_processing_{{arguments.parameters.processing_date}}.tar.gz"
+      
+      cd /data
+      tar -czf "/data/archive/$ARCHIVE_NAME" \
+        processed/ \
+        reports/
+      
+      # Upload to long-term storage
+      aws s3 cp "/data/archive/$ARCHIVE_NAME" \
+        "s3://data-archive/daily/$ARCHIVE_NAME"
+      
+      echo "Archived to: s3://data-archive/daily/$ARCHIVE_NAME"
+    env:
+      - name: AWS_ACCESS_KEY_ID
+        value: "{{SECRETS.AWS_ACCESS_KEY}}"
+      - name: AWS_SECRET_ACCESS_KEY
+        value: "{{SECRETS.AWS_SECRET_KEY}}"
+    volumeMounts:
+      - name: data-storage
+        mountPath: /data
+
+  # Step 6: Send Notifications
+  - name: Send Notifications
+    template: notification-handler
+    arguments:
+      parameters:
+        - name: report_date
+          value: "{{arguments.parameters.processing_date}}"
+        - name: recipients
+          value: "{{arguments.parameters.notification_email}}"
+
+# Templates
+templates:
+  - name: notification-handler
+    inputs:
+      parameters:
+        - name: report_date
+        - name: recipients
+    inlineScript: |
+      #!/bin/bash
+      echo "Sending notifications..."
+      
+      # Read summary
+      SUMMARY=$(cat /data/reports/summary.txt)
+      
+      # Send email notification
+      cat <<EOF | sendmail -t
+      To: {{inputs.parameters.recipients}}
+      Subject: Data Processing Complete - {{inputs.parameters.report_date}}
+      Content-Type: text/plain
+      
+      Data processing pipeline completed successfully.
+      
+      $SUMMARY
+      
+      Reports are available in the data archive.
+      EOF
+      
+      # Send Slack notification if configured
+      if [ -n "$SLACK_WEBHOOK" ]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data "{\"text\":\"Data processing complete for {{inputs.parameters.report_date}}\"}" \
+          $SLACK_WEBHOOK
+      fi
+      
+      echo "Notifications sent"
+    env:
+      - name: SLACK_WEBHOOK
+        value: "{{SECRETS.SLACK_WEBHOOK_URL}}"
+    volumeMounts:
+      - name: data-storage
+        mountPath: /data

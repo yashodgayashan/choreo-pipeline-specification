@@ -1,0 +1,94 @@
+site_name: Choreo Pipeline Specification
+site_description: Official specification for defining pipelines in Choreo IDP
+site_url: https://wso2.github.io/choreo-pipeline-specification/
+repo_url: https://github.com/wso2/choreo-pipeline-specification
+repo_name: wso2/choreo-pipeline-specification
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - content.code.copy
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quick Start: guides/quick-start.md
+    - Best Practices: guides/best-practices.md
+    - LLM Guide: LLMs.md
+  - Specification:
+    - Overview: specification/overview.md
+    - Core Concepts: specification/concepts.md
+    - Pipeline Types: specification/pipeline-types.md
+    - Configuration: specification/pipeline-configuration.md
+    - API Reference: specification/README.md
+    - Pipeline Structure: specification/pipeline-structure.md
+    - Steps: specification/steps.md
+    - Templates: specification/templates.md
+    - Environment Variables: specification/environment-variables.md
+    - Resources: specification/resources.md
+    - Built-in Templates: specification/built-in-templates.md
+  - Templates:
+    - Overview: choreo-templates/overview.md
+    - Build Templates: choreo-templates/build-templates.md
+    - Security Templates: choreo-templates/security-templates.md
+  - Examples:
+    - Overview: examples/README.md
+    - Build Pipelines:
+      - Go Build: examples/build/go-build.md
+      - Docker Build: examples/build/docker-build.md
+      - Java Build: examples/build/java-build.md
+    - Automation Pipelines:
+      - Terraform S3: examples/automation/terraform-s3.md
+  - Guides:
+    - Migration Guide: guides/migration.md
+    - Troubleshooting: guides/troubleshooting.md
+    - GitHub Actions Migration: guides/migrations/github-actions.md
+    - GitLab CI Migration: guides/migrations/gitlab-ci.md
+    - Bitbucket Migration: guides/migrations/bitbucket.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - minify:
+      minify_html: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/wso2/choreo-pipeline-specification
+  version:
+    provider: mike

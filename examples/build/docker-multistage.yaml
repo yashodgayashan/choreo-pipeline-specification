@@ -1,0 +1,166 @@
+# Docker Multi-stage Build Example
+# Use case: Efficient Docker builds with optimized final images
+# Prerequisites: Dockerfile with multi-stage setup
+
+pipelineType: ci
+version: "1.0"
+
+arguments:
+  parameters:
+    - name: app_name
+      value: "{{VARIABLES.APP_NAME}}"
+    - name: version
+      value: "{{VARIABLES.VERSION}}"
+    - name: registry
+      value: "{{VARIABLES.DOCKER_REGISTRY}}"
+
+steps:
+  # Step 1: Build optimized multi-stage Docker image
+  - name: Multi-stage Docker Build
+    template: choreo/docker-build@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "Dockerfile.multistage"
+        - name: context
+          value: "."
+        - name: image_name
+          value: "{{arguments.parameters.app_name}}"
+        - name: image_tag
+          value: "{{arguments.parameters.version}}"
+        - name: build_args
+          yamlObject:
+            # Build-time arguments for optimization
+            NODE_ENV: "production"
+            BUILD_VERSION: "{{arguments.parameters.version}}"
+            OPTIMIZE_BUILD: "true"
+        - name: target
+          value: "production"  # Final stage target
+        - name: cache_from
+          yamlObject:
+            # Cache from previous builds for faster rebuilds
+            - "{{arguments.parameters.registry}}/{{arguments.parameters.app_name}}:cache-deps"
+            - "{{arguments.parameters.registry}}/{{arguments.parameters.app_name}}:cache-build"
+        - name: platforms
+          yamlObject:
+            - "linux/amd64"
+            - "linux/arm64"
+
+  # Step 2: Analyze image size and layers
+  - name: Image Analysis
+    inlineScript: |
+      #!/bin/bash
+      echo "🔍 Analyzing Docker image efficiency..."
+      
+      # Get image size
+      IMAGE_SIZE=$(docker images {{arguments.parameters.app_name}}:{{arguments.parameters.version}} --format "{{.Size}}")
+      echo "Final image size: $IMAGE_SIZE"
+      
+      # Analyze layers
+      echo "=== Image Layers ==="
+      docker history {{arguments.parameters.app_name}}:{{arguments.parameters.version}} --no-trunc
+      
+      # Security scan for vulnerabilities
+      echo "=== Security Overview ==="
+      docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+        aquasec/trivy:latest image --exit-code 0 \
+        --severity HIGH,CRITICAL \
+        --format table \
+        {{arguments.parameters.app_name}}:{{arguments.parameters.version}}
+
+  # Step 3: Push cache layers for future builds
+  - name: Push Build Cache
+    template: choreo/docker-build@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "Dockerfile.multistage"
+        - name: context
+          value: "."
+        - name: image_name
+          value: "{{arguments.parameters.registry}}/{{arguments.parameters.app_name}}"
+        - name: image_tag
+          value: "cache-deps"
+        - name: target
+          value: "dependencies"  # Cache dependencies stage
+        - name: push
+          value: "true"
+        - name: registry_auth
+          yamlObject:
+            username: "{{VARIABLES.REGISTRY_USERNAME}}"
+            password: "{{SECRETS.REGISTRY_PASSWORD}}"
+
+  # Step 4: Push final optimized image
+  - name: Push Production Image
+    when: "{{CI_BRANCH}} == 'main'"
+    template: choreo/docker-build@v1
+    arguments:
+      parameters:
+        - name: dockerfile
+          value: "Dockerfile.multistage"
+        - name: context
+          value: "."
+        - name: image_name
+          value: "{{arguments.parameters.registry}}/{{arguments.parameters.app_name}}"
+        - name: image_tag
+          value: "{{arguments.parameters.version}}"
+        - name: target
+          value: "production"
+        - name: push
+          value: "true"
+        - name: registry_auth
+          yamlObject:
+            username: "{{VARIABLES.REGISTRY_USERNAME}}"
+            password: "{{SECRETS.REGISTRY_PASSWORD}}"
+
+  # Step 5: Image vulnerability assessment
+  - name: Production Security Scan
+    when: "{{CI_BRANCH}} == 'main'"
+    template: choreo/trivy-scan@v1
+    arguments:
+      parameters:
+        - name: scan_type
+          value: "image"
+        - name: target
+          value: "{{arguments.parameters.registry}}/{{arguments.parameters.app_name}}:{{arguments.parameters.version}}"
+        - name: severity
+          value: "HIGH,CRITICAL"
+        - name: format
+          value: "sarif"
+        - name: output_file
+          value: "security-report.sarif"
+        - name: exit_code
+          value: "1"  # Fail on vulnerabilities
+
+# Example Dockerfile.multistage structure:
+# FROM node:18-alpine AS dependencies
+# WORKDIR /app
+# COPY package*.json ./
+# RUN npm ci --only=production
+# 
+# FROM node:18-alpine AS build
+# WORKDIR /app
+# COPY package*.json ./
+# RUN npm ci
+# COPY . .
+# RUN npm run build
+# 
+# FROM node:18-alpine AS production
+# WORKDIR /app
+# RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
+# COPY --from=dependencies /app/node_modules ./node_modules
+# COPY --from=build /app/dist ./dist
+# COPY --from=build /app/package.json ./package.json
+# USER nextjs
+# EXPOSE 3000
+# CMD ["npm", "start"]
+
+# Required Configuration:
+# VARIABLES:
+#   APP_NAME: "my-optimized-app"
+#   VERSION: "1.2.3"
+#   DOCKER_REGISTRY: "myregistry.com"
+#   REGISTRY_USERNAME: "ci-user"
+#
+# SECRETS:
+#   REGISTRY_PASSWORD: "your-registry-token-here"

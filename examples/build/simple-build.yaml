@@ -1,0 +1,28 @@
+# Simple Build Pipeline
+# Basic build pipeline with test and build steps
+# Configuration managed through Choreo Console
+
+steps:
+  - name: Install Dependencies
+    inlineScript: |
+      #!/bin/bash
+      echo "Installing dependencies..."
+      cd $REPOSITORY_DIR
+      npm install
+      echo "Dependencies installed successfully"
+
+  - name: Run Tests
+    inlineScript: |
+      #!/bin/bash
+      echo "Running tests..."
+      cd $REPOSITORY_DIR
+      npm test
+      echo "Tests completed"
+
+  - name: Build Application
+    inlineScript: |
+      #!/bin/bash
+      echo "Building application..."
+      cd $REPOSITORY_DIR
+      npm run build
+      echo "Build completed successfully"

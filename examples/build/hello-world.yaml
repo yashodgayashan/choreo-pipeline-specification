@@ -1,0 +1,11 @@
+# Basic Hello World Pipeline
+# This is the simplest possible pipeline with a single step
+# Configuration managed through Choreo Console
+
+steps:
+  - name: Hello World
+    inlineScript: |
+      #!/bin/bash
+      echo "Hello, World!"
+      echo "Current date: $(date)"
+      echo "Pipeline is running successfully!"
